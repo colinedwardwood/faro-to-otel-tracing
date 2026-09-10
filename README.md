@@ -665,6 +665,8 @@ The repo uses pnpm, so the multi-stage build does too:
 FROM node:22-alpine AS build
 WORKDIR /app
 RUN corepack enable
+# pnpm's own prune refuses to run non-interactively otherwise ("no TTY")
+ENV CI=true
 
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
@@ -923,8 +925,8 @@ otelcol.receiver.prometheus "default" {
 // ---------------------------------------------------------------------
 otelcol.processor.batch "default" {
   output {
-    traces  = [otelcol.exporter.otlp.grafana_cloud.input]
-    metrics = [otelcol.exporter.otlp.grafana_cloud.input]
+    traces  = [otelcol.exporter.otlphttp.grafana_cloud.input]
+    metrics = [otelcol.exporter.otlphttp.grafana_cloud.input]
   }
 }
 
@@ -933,7 +935,10 @@ otelcol.auth.basic "grafana_cloud" {
   password = sys.env("GRAFANA_CLOUD_API_TOKEN")
 }
 
-otelcol.exporter.otlp "grafana_cloud" {
+// Grafana Cloud's OTLP gateway only speaks OTLP/HTTP, not gRPC — the plain
+// otelcol.exporter.otlp component defaults to gRPC and fails against this
+// endpoint with a "no children to pick from" resolver error.
+otelcol.exporter.otlphttp "grafana_cloud" {
   client {
     endpoint = sys.env("GRAFANA_CLOUD_OTLP_ENDPOINT")
     auth     = otelcol.auth.basic.grafana_cloud.handler
@@ -942,6 +947,8 @@ otelcol.exporter.otlp "grafana_cloud" {
 ```
 
 `otelcol.receiver.prometheus` is the bridge component that lets a `prometheus.scrape` target's output flow into an otelcol pipeline — without it you'd need a second, separate export path just for the Postgres metrics. `otelcol.auth.basic` is the component that turns your instance ID and API token into the Basic Auth header Grafana Cloud's OTLP gateway expects; note it's attached to the *exporter*, not the receiver — Alloy itself doesn't require auth from your own app, only Grafana Cloud does.
+
+One deliberate choice worth calling out: the exporter is `otelcol.exporter.otlphttp`, not the more commonly-reached-for `otelcol.exporter.otlp`. Grafana Cloud's OTLP gateway only accepts OTLP over HTTP — the endpoint URL even has an HTTP path on it (`/otlp`). `otelcol.exporter.otlp` defaults to gRPC, and pointing it at this endpoint fails with a gRPC resolver error (`no children to pick from`) rather than anything that obviously says "wrong protocol." I hit exactly this running the stack against a real Grafana Cloud account while writing this guide — if you see that error, this is almost certainly why.
 
 One more thing worth calling out: the Postgres user in `DATABASE_URL` is the same one the app itself uses, for simplicity. Past a local demo, give the exporter its own read-only role instead — `GRANT pg_monitor TO exporter_user;` is enough for the stats views it needs, and there's no reason to hand it your application credentials.
 
@@ -1604,6 +1611,8 @@ cat > Dockerfile <<'EOF'
 FROM node:22-alpine AS build
 WORKDIR /app
 RUN corepack enable
+# pnpm's own prune refuses to run non-interactively otherwise ("no TTY")
+ENV CI=true
 
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
@@ -1708,8 +1717,8 @@ otelcol.receiver.prometheus "default" {
 
 otelcol.processor.batch "default" {
   output {
-    traces  = [otelcol.exporter.otlp.grafana_cloud.input]
-    metrics = [otelcol.exporter.otlp.grafana_cloud.input]
+    traces  = [otelcol.exporter.otlphttp.grafana_cloud.input]
+    metrics = [otelcol.exporter.otlphttp.grafana_cloud.input]
   }
 }
 
@@ -1718,7 +1727,10 @@ otelcol.auth.basic "grafana_cloud" {
   password = sys.env("GRAFANA_CLOUD_API_TOKEN")
 }
 
-otelcol.exporter.otlp "grafana_cloud" {
+// Grafana Cloud's OTLP gateway only speaks OTLP/HTTP, not gRPC — the plain
+// otelcol.exporter.otlp component defaults to gRPC and fails against this
+// endpoint with a "no children to pick from" resolver error.
+otelcol.exporter.otlphttp "grafana_cloud" {
   client {
     endpoint = sys.env("GRAFANA_CLOUD_OTLP_ENDPOINT")
     auth     = otelcol.auth.basic.grafana_cloud.handler
@@ -1764,6 +1776,8 @@ echo "  docker compose up --build"
 - **Form posts fail with a 403.** SvelteKit's CSRF check validates the request's origin against `ORIGIN`. Missing or wrong value in `.env` is almost always the cause.
 - **Nothing shows up in Frontend Observability.** Double-check `PUBLIC_FARO_COLLECTOR_URL` was copied exactly (including the trailing app key) and that it actually reached the client bundle — it has to be prefixed `PUBLIC_` and present in the app container's environment at request time.
 - **Alloy logs `401 Unauthorized` talking to the OTLP gateway.** Wrong instance ID, wrong token, or a token missing the `traces:write`/`metrics:write` scopes. Regenerate it from Cloud Portal → Access Policies rather than guessing at the scope names.
+- **Alloy logs `Exporting failed... rpc error: code = Unavailable desc = no children to pick from`.** This is a gRPC resolver error, and it means the exporter is configured for gRPC against an endpoint that only speaks HTTP. Make sure `config.alloy` uses `otelcol.exporter.otlphttp`, not `otelcol.exporter.otlp` — see the callout in [2.4](#24-collector-grafana-alloy).
+- **Docker build fails on `pnpm prune --prod` with `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`.** pnpm refuses to prune non-interactively without being told it's a CI environment. `ENV CI=true` before the prune step in the Dockerfile fixes it — it's already in the version above, but easy to lose if you're customizing the build stage.
 - **Postgres metrics never show up.** Confirm `DATABASE_URL` resolves inside the Docker network (`postgres`, not `localhost`) and that the user in it can read `pg_stat_*` views.
 
 ## Where to go from here

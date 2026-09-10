@@ -590,6 +590,8 @@ cat > Dockerfile <<'EOF'
 FROM node:22-alpine AS build
 WORKDIR /app
 RUN corepack enable
+# pnpm's own prune refuses to run non-interactively otherwise ("no TTY")
+ENV CI=true
 
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
@@ -694,8 +696,8 @@ otelcol.receiver.prometheus "default" {
 
 otelcol.processor.batch "default" {
   output {
-    traces  = [otelcol.exporter.otlp.grafana_cloud.input]
-    metrics = [otelcol.exporter.otlp.grafana_cloud.input]
+    traces  = [otelcol.exporter.otlphttp.grafana_cloud.input]
+    metrics = [otelcol.exporter.otlphttp.grafana_cloud.input]
   }
 }
 
@@ -704,7 +706,10 @@ otelcol.auth.basic "grafana_cloud" {
   password = sys.env("GRAFANA_CLOUD_API_TOKEN")
 }
 
-otelcol.exporter.otlp "grafana_cloud" {
+// Grafana Cloud's OTLP gateway only speaks OTLP/HTTP, not gRPC — the plain
+// otelcol.exporter.otlp component defaults to gRPC and fails against this
+// endpoint with a "no children to pick from" resolver error.
+otelcol.exporter.otlphttp "grafana_cloud" {
   client {
     endpoint = sys.env("GRAFANA_CLOUD_OTLP_ENDPOINT")
     auth     = otelcol.auth.basic.grafana_cloud.handler
