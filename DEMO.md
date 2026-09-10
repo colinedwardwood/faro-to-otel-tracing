@@ -4,6 +4,8 @@ A live-demo runbook for the guide in `README.md`. Each step: one line of context
 
 The arc: get the pre-built app up and prove there's nothing to see. Tear it down. Instrument it. Bring it back up and watch the same click produce a trace. The contrast is the whole demo — don't skip straight to the instrumented version.
 
+Every terminal command from Step 2 onward runs from **`faro-to-otel-tracing/app/`** — the directory Step 1's `cd` lands you in. It never changes for the rest of this script; each step still says so explicitly below so you can jump in mid-demo without re-deriving it.
+
 ## Setup (before the room fills up)
 
 - Grafana Cloud, logged in, in a browser tab: Frontend Observability app + a Connections → OpenTelemetry (OTLP) page, both open.
@@ -23,7 +25,7 @@ cd faro-to-otel-tracing/app
 
 Why: this is the pre-instrumented baseline — a real, working, Postgres-backed app, checked into the repo exactly as is.
 
-**Action:**
+**Action** (from `faro-to-otel-tracing/app/`):
 ```bash
 cp .env.example .env
 docker compose up --build
@@ -35,77 +37,27 @@ Why: this beat is the entire setup for the rest of the demo.
 
 **Action:** open `http://localhost:3000`, register an account, write a comment. It works. Ask the room: *"so — where would you even look, if this were slow?"* Let that sit for a second.
 
-**Action:** tear it down.
+**Action** (from `faro-to-otel-tracing/app/`): tear it down.
 ```bash
 docker compose down
 ```
 
 ## 4. Instrument it
 
-Why: same app, same database — we're adding visibility, not rebuilding anything.
+Why: same app, same database — we're adding visibility, not rebuilding anything. Faro (the browser half) fully first, then OpenTelemetry (the server half), then the collector that ties them together — each one is a complete, working unit before the next starts.
 
-### 4.1 Install Faro and OpenTelemetry
+### 4.1 Install Faro
 
-**Action:**
+**Action** (from `faro-to-otel-tracing/app/`):
 ```bash
-pnpm add @opentelemetry/api @opentelemetry/sdk-node \
-  @opentelemetry/auto-instrumentations-node \
-  @opentelemetry/exporter-trace-otlp-grpc \
-  @opentelemetry/resources @opentelemetry/semantic-conventions \
-  @grafana/faro-web-sdk @grafana/faro-web-tracing
-mkdir -p alloy
+pnpm add @grafana/faro-web-sdk @grafana/faro-web-tracing
 ```
 
-### 4.2 Turn on SvelteKit's native tracing
-
-Why: this flag makes SvelteKit wrap its own internals — routing, `load`, actions — in spans automatically.
-
-**Action:** add to `svelte.config.js`'s `kit` block:
-```js
-kit: {
-  adapter: adapter(),
-  experimental: {
-    instrumentation: { server: true },
-    tracing: { server: true }
-  }
-}
-```
-
-### 4.3 Start OpenTelemetry before anything else loads
-
-Why: auto-instrumentation patches modules (`http`, `pg`) the first time they're imported — it has to run first.
-
-**Action:** create `src/instrumentation.server.js`:
-```js
-import { NodeSDK } from '@opentelemetry/sdk-node';
-import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-grpc';
-import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
-import { resourceFromAttributes } from '@opentelemetry/resources';
-import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
-
-const sdk = new NodeSDK({
-  resource: resourceFromAttributes({
-    [ATTR_SERVICE_NAME]: 'conduit-backend',
-    [ATTR_SERVICE_VERSION]: '1.0.0'
-  }),
-  traceExporter: new OTLPTraceExporter({
-    url: process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? 'http://localhost:4317'
-  }),
-  instrumentations: [
-    getNodeAutoInstrumentations({
-      '@opentelemetry/instrumentation-fs': { enabled: false }
-    })
-  ]
-});
-
-sdk.start();
-```
-
-### 4.4 Initialize Faro
+### 4.2 Initialize Faro
 
 Why: this is the browser half — RUM, web vitals, and (since frontend and backend share an origin here) trace continuity for free.
 
-**Action:** create `src/lib/faro.js`:
+**Action** (from `faro-to-otel-tracing/app/`): create `src/lib/faro.js`:
 ```js
 import { getWebInstrumentations, initializeFaro } from '@grafana/faro-web-sdk';
 import { TracingInstrumentation } from '@grafana/faro-web-tracing';
@@ -135,7 +87,11 @@ export function initFaro(collectorUrl, environment) {
 }
 ```
 
-**Action:** create `src/hooks.client.js`:
+### 4.3 Load Faro on boot
+
+Why: `hooks.client.js` runs once when the app boots in the browser — the earliest hook there is.
+
+**Action** (from `faro-to-otel-tracing/app/`): create `src/hooks.client.js`:
 ```js
 import { browser } from '$app/environment';
 import { env } from '$env/dynamic/public';
@@ -146,19 +102,82 @@ if (browser) {
 }
 ```
 
-### 4.5 Configure the collector
+That's Faro done. Next, OpenTelemetry — the server half.
+
+### 4.4 Install OpenTelemetry
+
+**Action** (from `faro-to-otel-tracing/app/`):
+```bash
+pnpm add @opentelemetry/api @opentelemetry/sdk-node \
+  @opentelemetry/auto-instrumentations-node \
+  @opentelemetry/exporter-trace-otlp-grpc \
+  @opentelemetry/resources @opentelemetry/semantic-conventions
+```
+
+### 4.5 Turn on SvelteKit's native tracing
+
+Why: this flag makes SvelteKit wrap its own internals — routing, `load`, actions — in spans automatically.
+
+**Action** (from `faro-to-otel-tracing/app/`): add to `svelte.config.js`'s `kit` block:
+```js
+kit: {
+  adapter: adapter(),
+  experimental: {
+    instrumentation: { server: true },
+    tracing: { server: true }
+  }
+}
+```
+
+### 4.6 Start OpenTelemetry before anything else loads
+
+Why: auto-instrumentation patches modules (`http`, `pg`) the first time they're imported — it has to run first.
+
+**Action** (from `faro-to-otel-tracing/app/`): create `src/instrumentation.server.js`:
+```js
+import { NodeSDK } from '@opentelemetry/sdk-node';
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-grpc';
+import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
+import { resourceFromAttributes } from '@opentelemetry/resources';
+import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
+
+const sdk = new NodeSDK({
+  resource: resourceFromAttributes({
+    [ATTR_SERVICE_NAME]: 'conduit-backend',
+    [ATTR_SERVICE_VERSION]: '1.0.0'
+  }),
+  traceExporter: new OTLPTraceExporter({
+    url: process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? 'http://localhost:4317'
+  }),
+  instrumentations: [
+    getNodeAutoInstrumentations({
+      '@opentelemetry/instrumentation-fs': { enabled: false }
+    })
+  ]
+});
+
+sdk.start();
+```
+
+That's OpenTelemetry done. Last piece: the collector both of them ship to.
+
+### 4.7 Configure the collector
 
 Why: receives OTLP from the backend, scrapes Postgres, forwards both to Grafana Cloud, authenticated.
 
-**Action:** create `alloy/config.alloy` — full content is in [README's "Collector: Grafana Alloy"](README.md#collector-grafana-alloy); copy-paste it.
+**Action** (from `faro-to-otel-tracing/app/`):
+```bash
+mkdir -p alloy
+```
+Then create `alloy/config.alloy` — full content is in [README's "Collector: Grafana Alloy"](README.md#collector-grafana-alloy); copy-paste it.
 
-### 4.6 Add Alloy to the compose file
+### 4.8 Add Alloy to the compose file
 
-**Action:** add to `docker-compose.yml`'s `app` service and add an `alloy` service — full content is in [README's "Bring the alloy service into docker-compose"](README.md#bring-the-alloy-service-into-docker-compose); copy-paste it.
+**Action** (from `faro-to-otel-tracing/app/`): add to `docker-compose.yml`'s `app` service and add an `alloy` service — full content is in [README's "Bring the alloy service into docker-compose"](README.md#bring-the-alloy-service-into-docker-compose); copy-paste it.
 
-### 4.7 Add the rest of the environment
+### 4.9 Add the rest of the environment
 
-**Action:** append to `.env`:
+**Action** (from `faro-to-otel-tracing/app/`): append to `.env`:
 ```bash
 OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4317
 PUBLIC_APP_ENV=live-demo
@@ -170,7 +189,7 @@ GRAFANA_CLOUD_API_TOKEN=<from Setup>
 
 ## 5. Bring it back up
 
-**Action:**
+**Action** (from `faro-to-otel-tracing/app/`):
 ```bash
 docker compose up --build
 ```
@@ -213,7 +232,7 @@ Why: give them the one sentence to remember.
 
 ## The one-command version of Step 4
 
-If you're re-running this and don't need to teach the file-by-file version, `scripts/instrument.sh` does all of 4.1–4.7 in one pass. See [README's "Do it with one command instead"](README.md#do-it-with-one-command-instead).
+If you're re-running this and don't need to teach the file-by-file version, `scripts/instrument.sh` does all of 4.1–4.9 in one pass, run from `faro-to-otel-tracing/app/`. See [README's "Do it with one command instead"](README.md#do-it-with-one-command-instead).
 
 ## If something breaks on stage
 
