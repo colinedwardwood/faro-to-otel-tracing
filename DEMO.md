@@ -23,7 +23,7 @@ cd faro-to-otel-tracing/app
 
 ## 2. Start it
 
-Why: this is the pre-instrumented baseline — a real, working, Postgres-backed app, checked into the repo exactly as is.
+Why: this is the pre-instrumented baseline — a real, working, Postgres-backed app, checked into the repo exactly as is. `.env.example` has some observability-related placeholders further down too, already there for step 4 — they're inert right now, nothing reads them yet.
 
 **Action** (from `faro-to-otel-tracing/app/`):
 ```bash
@@ -183,15 +183,19 @@ mkdir -p alloy
 ```
 Then create `alloy/config.alloy` — full content is in [README's "Collector: Grafana Alloy"](README.md#collector-grafana-alloy); copy-paste it.
 
-### 4.8 Add Alloy to the compose file
+### 4.8 Uncomment the alloy service
 
-**Action** (from `faro-to-otel-tracing/app/`): add to `docker-compose.yml`'s `app` service and add an `alloy` service — full content is in [README's "Bring the alloy service into docker-compose"](README.md#bring-the-alloy-service-into-docker-compose); copy-paste it.
+Why: `docker-compose.yml` already has it written out, commented out — that's what kept the baseline in step 2 from having anywhere to send telemetry even by accident.
 
-### 4.9 Add the rest of the environment
+**Action** (from `faro-to-otel-tracing/app/`): uncomment the `alloy` entry under `app`'s `depends_on`, and the whole `alloy:` service block below it. Nothing to retype — see [README's "Uncomment the alloy service in docker-compose"](README.md#uncomment-the-alloy-service-in-docker-compose) if you want to check the shape.
 
-**Action** (from `faro-to-otel-tracing/app/`): append to `.env`:
+### 4.9 Fill in the rest of the environment
+
+Why: `.env` already has these five keys, sitting there as inert placeholders since step 2.
+
+**Action** (from `faro-to-otel-tracing/app/`): edit `.env` — swap the placeholder values for real ones (the first two are already correct, leave them):
 ```bash
-OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4317
+OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4317   # already correct
 PUBLIC_APP_ENV=live-demo
 PUBLIC_FARO_COLLECTOR_URL=<from Setup>
 GRAFANA_CLOUD_OTLP_ENDPOINT=<from Setup>

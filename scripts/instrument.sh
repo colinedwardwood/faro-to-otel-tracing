@@ -309,23 +309,9 @@ otelcol.exporter.otlphttp "grafana_cloud" {
 }
 EOF
 
-echo "==> .env.example (appending the observability block)"
-cat >> .env.example <<'EOF'
-
-# backend -> Alloy, over the internal docker network
-OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4317
-PUBLIC_APP_ENV=local
-
-# Cloud Portal -> Frontend Observability -> your app -> Web SDK Configuration
-PUBLIC_FARO_COLLECTOR_URL=https://faro-collector-prod-us-central-0.grafana.net/collect/00000000000000000000000000000000
-
-# Cloud Portal -> your stack -> Connections -> OpenTelemetry (OTLP)
-GRAFANA_CLOUD_OTLP_ENDPOINT=https://otlp-gateway-prod-us-central-0.grafana.net/otlp
-GRAFANA_CLOUD_INSTANCE_ID=000000
-GRAFANA_CLOUD_API_TOKEN=glc_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-EOF
-
 echo
-echo "Done. Next steps:"
-echo "  cp .env.example .env   # then fill in your Grafana Cloud values"
+echo "Done. .env.example already has placeholders for the 5 observability vars -"
+echo "if your .env predates this baseline, diff it against .env.example and add"
+echo "whatever's missing. Next steps:"
+echo "  edit .env with your real Grafana Cloud values"
 echo "  docker compose up --build"

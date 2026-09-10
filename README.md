@@ -24,7 +24,7 @@ So `app/` swaps in a real, local Postgres database instead, and nothing else. Ev
 | [`src/lib/api.js`](app/src/lib/api.js) | Same four exports (`get`/`post`/`put`/`del`), same signatures, same response shapes — now backed by Postgres instead of the hosted demo API |
 | [`src/lib/server/db.js`](app/src/lib/server/db.js) | The `pg` connection pool |
 | [`db/init.sql`](app/db/init.sql) | Schema: users, articles, tags, comments, favorites, follows |
-| [`Dockerfile`](app/Dockerfile), [`docker-compose.yml`](app/docker-compose.yml) | Multi-stage pnpm build; Postgres + app, nothing else yet |
+| [`Dockerfile`](app/Dockerfile), [`docker-compose.yml`](app/docker-compose.yml) | Multi-stage pnpm build; Postgres + app running by default. There's also a commented-out `alloy` service already sketched in `docker-compose.yml` — uncomment it once you've instrumented the app, rather than pasting it in from scratch |
 
 That's it — no observability instrumentation anywhere in `app/` yet. It's a completely ordinary, working, self-hosted app with zero visibility into what it's doing. That's deliberate: the point of the rest of this guide is watching that change.
 
@@ -78,7 +78,7 @@ The arrow that makes this a *connected* trace rather than three separate dashboa
 
 ## Environment variables
 
-Every credential and endpoint this stack needs lives in one `.env` file (gitignored — never commit it), loaded by Docker Compose and (for Alloy) read at startup via `sys.env(...)`. `app/.env.example` already has the baseline block committed; the instrumentation step below adds the rest.
+Every credential and endpoint this stack needs lives in one `.env` file (gitignored — never commit it), loaded by Docker Compose and (for Alloy) read at startup via `sys.env(...)`. `app/.env.example` already has all of it, top to bottom — the observability half sits there as inert placeholders until you fill in real values and actually instrument the app.
 
 | Variable | Used by | Where it comes from |
 |---|---|---|
@@ -93,7 +93,7 @@ Every credential and endpoint this stack needs lives in one `.env` file (gitigno
 | `GRAFANA_CLOUD_INSTANCE_ID` | Alloy | Same OTLP connection page — used as the Basic Auth username |
 | `GRAFANA_CLOUD_API_TOKEN` | Alloy | An [Access Policy Token](https://grafana.com/docs/grafana-cloud/account-management/authentication-and-permissions/access-policies/) with `metrics:write` and `traces:write` scopes, created from **Cloud Portal → Access Policies**. This one's a real secret — it stays server-side in Alloy and never ships to the browser. |
 
-The last five don't exist yet — they get added when you instrument the app, not before.
+The last five are already sitting in `.env.example` as placeholders — nothing reads them until you instrument the app and swap in real values.
 
 ---
 
@@ -106,7 +106,7 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Nothing to fill in yet — `.env.example`'s baseline block is all local Postgres credentials, not secrets.
+Nothing to fill in yet — the Postgres/app block at the top of `.env.example` is all local credentials, not secrets, and the observability placeholders further down are inert until something actually reads them.
 
 ## Test it
 
@@ -482,15 +482,11 @@ One more thing worth calling out: the Postgres user in `DATABASE_URL` is the sam
 
 The `add_resource_attributes_as_metric_attributes` processor above only does something useful if a `deployment.environment` resource attribute actually exists on the data flowing through it — our Node backend's own resource (in `instrumentation.server.js`) only sets `service.name` and `service.version`. Rather than touch the app for this, we set it once, centrally, on the collector — see the `alloy` service's `OTEL_RESOURCE_ATTRIBUTES` below, which is the standard OpenTelemetry environment variable every "env" resource detector — this one included — already knows to read.
 
-### Bring the alloy service into docker-compose
+### Uncomment the alloy service in docker-compose
 
-Add it to the existing `docker-compose.yml`:
+`docker-compose.yml` already has the `alloy` service written out — commented out, specifically so the baseline app comes up with nowhere to send telemetry even by accident. Uncomment two spots: the `alloy` entry under `app`'s `depends_on`, and the whole `alloy:` service block below it. Nothing to retype — it's already the right shape:
 
 ```yaml
-services:
-  postgres:
-    # ...unchanged...
-
   app:
     build: .
     restart: unless-stopped
@@ -522,18 +518,15 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-
-volumes:
-  pgdata:
 ```
 
-(`app`'s `depends_on` picked up the new `alloy` entry — that's the only change to the service itself.)
+### Fill in the rest of the environment
 
-Append the rest of the environment to `.env`:
+The same five vars from the [environment variables table](#environment-variables) are already in `.env` as placeholders — swap them for real values:
 
 ```bash
-OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4317
-PUBLIC_APP_ENV=local
+OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4317   # already correct, leave as-is
+PUBLIC_APP_ENV=local                             # already fine, leave as-is
 PUBLIC_FARO_COLLECTOR_URL=<from Grafana Cloud>
 GRAFANA_CLOUD_OTLP_ENDPOINT=<from Grafana Cloud>
 GRAFANA_CLOUD_INSTANCE_ID=<from Grafana Cloud>
