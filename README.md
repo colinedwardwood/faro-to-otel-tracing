@@ -126,6 +126,14 @@ docker compose down
 
 Grafana Cloud → **Frontend Observability** → your app → **Configure** walks you through this exact setup, and it's worth following its snippet almost verbatim rather than inventing your own shape — that page is also where `PUBLIC_FARO_COLLECTOR_URL` comes from.
 
+**Set the CORS Allowed Origins first — it's easy to miss and it fails silently.** Same page, usually a separate tab or section from the SDK snippet. If it's empty, Grafana blocks every request from the browser with no error surfaced anywhere obvious — the POST just gets rejected by CORS before it leaves the browser. Set it to the app's actual origin:
+
+```
+http://localhost:3000
+```
+
+Matching is exact against the full origin (scheme + host + port), not just the hostname — a single `*` wildcard is allowed if you need to cover more than one (`http://localhost:*`), but avoid a bare `*` for anything you care about, since it lets anyone submit data to your endpoint. Allow ~2 minutes for a saved change to actually take effect.
+
 **Choose your package type and install Faro.** The Cloud UI gives you the `npm` form; here's the `pnpm` equivalent since that's what this app uses:
 
 ```bash
@@ -561,7 +569,7 @@ It refuses to run if it looks like the app is instrumented already, and it does 
 - **Frontend and backend traces show up separately in Tempo, never merged.** For this app, that almost always means the browser request wasn't actually same-origin — a mismatched port or `http` vs. `https` is enough to break it. If you've split the frontend and backend onto genuinely different origins, you additionally need `propagateTraceHeaderCorsUrls` set on `TracingInstrumentation` to match the backend's real origin (see [Connecting frontend and backend traces](#connecting-frontend-and-backend-traces)).
 - **No spans from the backend at all.** Confirm both `experimental.instrumentation.server` and `experimental.tracing.server` are set in `svelte.config.js`, and that you rebuilt the image afterward — this is a build-time flag, not a runtime one.
 - **Form posts fail with a 403.** SvelteKit's CSRF check validates the request's origin against `ORIGIN`. Missing or wrong value in `.env` is almost always the cause.
-- **Nothing shows up in Frontend Observability.** Double-check `PUBLIC_FARO_COLLECTOR_URL` was copied exactly (including the trailing app key) and that it actually reached the client bundle — it has to be prefixed `PUBLIC_` and present in the app container's environment at request time.
+- **Nothing shows up in Frontend Observability.** Two separate possible causes: (1) `PUBLIC_FARO_COLLECTOR_URL` wasn't copied exactly (including the trailing app key) or didn't reach the client bundle — it has to be prefixed `PUBLIC_` and present in the app container's environment at request time; (2) the CORS Allowed Origins field on the Cloud Portal's Configure page is empty or doesn't match — check the browser's own console/network tab for a CORS error, and remember changes take ~2 minutes to propagate after saving.
 - **Alloy logs `401 Unauthorized` talking to the OTLP gateway.** Wrong instance ID, wrong token, or a token missing the `traces:write`/`metrics:write` scopes. Regenerate it from Cloud Portal → Access Policies rather than guessing at the scope names.
 - **Alloy logs `Exporting failed... rpc error: code = Unavailable desc = no children to pick from`.** This is a gRPC resolver error, and it means the exporter is configured for gRPC against an endpoint that only speaks HTTP. Make sure `config.alloy` uses `otelcol.exporter.otlphttp`, not `otelcol.exporter.otlp` — see the callout in [Collector: Grafana Alloy](#collector-grafana-alloy).
 - **Docker build fails on `pnpm prune --prod` with `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`.** pnpm refuses to prune non-interactively without being told it's a CI environment. `ENV CI=true` before the prune step in `app/Dockerfile` fixes it — it's already there, but easy to lose if you're customizing the build stage.
