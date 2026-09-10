@@ -2,179 +2,45 @@
 
 A live-demo runbook for the guide in `README.md`. Each step: one line of context, then the action. Do the setup section before anyone's watching.
 
-The arc: get a boring, working app up first and prove there's nothing to see. Tear it down. Instrument it. Bring it back up and watch the same click produce a trace. The contrast is the whole demo — don't skip straight to the instrumented version.
+The arc: get the pre-built app up and prove there's nothing to see. Tear it down. Instrument it. Bring it back up and watch the same click produce a trace. The contrast is the whole demo — don't skip straight to the instrumented version.
 
 ## Setup (before the room fills up)
 
 - Grafana Cloud, logged in, in a browser tab: Frontend Observability app + a Connections → OpenTelemetry (OTLP) page, both open.
 - **Action:** have your four Grafana Cloud values (Faro collector URL, OTLP endpoint, instance ID, API token) copied into a notes doc — you'll paste them in later, never type them live.
 
-## 1. Start from the untouched app
+## 1. Clone this repo
 
-Why: we're not building a toy — this is the actual, unmodified SvelteKit RealWorld app.
-
-**Action:**
-```bash
-git clone https://github.com/sveltejs/realworld.git conduit && cd conduit
-```
-
-## 2. Give it a database — still nothing observability-flavored
-
-Why: this part is just "make it self-hostable," ordinary backend work. No Faro, no OpenTelemetry, no Alloy yet — on purpose.
-
-### 2.1 Swap the adapter
-
-Why: `adapter-vercel` doesn't self-host in Docker.
+Why: the Postgres wiring is already done, checked in at `app/` — see [README's "The demo environment"](README.md#the-demo-environment) for what changed from upstream and why. That part is background, not something to build live.
 
 **Action:**
 ```bash
-pnpm remove @sveltejs/adapter-vercel
-pnpm add -D @sveltejs/adapter-node
+git clone https://github.com/colinedwardwood/faro-to-otel-tracing.git
+cd faro-to-otel-tracing/app
 ```
 
-### 2.2 Install the database driver
+## 2. Start it
+
+Why: this is the pre-instrumented baseline — a real, working, Postgres-backed app, checked into the repo exactly as is.
 
 **Action:**
 ```bash
-pnpm add pg bcryptjs
-mkdir -p src/lib/server db
-```
-
-### 2.3 Point svelte.config.js at the new adapter
-
-**Action:** replace `svelte.config.js` with:
-```js
-import adapter from '@sveltejs/adapter-node';
-import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
-
-/** @type {import('@sveltejs/kit').Config} */
-const config = {
-  preprocess: vitePreprocess(),
-  kit: {
-    adapter: adapter()
-  }
-};
-
-export default config;
-```
-
-### 2.4 Wire up the connection pool
-
-**Action:** create `src/lib/server/db.js`:
-```js
-import pg from 'pg';
-import { DATABASE_URL } from '$env/static/private';
-
-const { Pool } = pg;
-
-export const pool = new Pool({ connectionString: DATABASE_URL });
-```
-
-### 2.5 Swap the data layer
-
-Why: same four exports (`get`/`post`/`put`/`del`), same shapes — now backed by Postgres instead of a hosted demo API. Every route keeps working unmodified.
-
-**Action:** back it up, then replace `src/lib/api.js` — full content is in [README §1.5](README.md#15-the-actual-swap-srclibapijs); copy-paste it:
-```bash
-cp src/lib/api.js src/lib/api.js.orig
-# paste the block from README §1.5 into src/lib/api.js
-```
-
-### 2.6 Add the schema
-
-**Action:** create `db/init.sql` — full content is in [README §1.3](README.md#13-the-schema); copy-paste it.
-
-### 2.7 Containerize it
-
-**Action:** create `Dockerfile`:
-```dockerfile
-FROM node:22-alpine AS build
-WORKDIR /app
-RUN corepack enable
-ENV CI=true
-
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
-
-COPY . .
-RUN pnpm run build
-RUN pnpm prune --prod
-
-FROM node:22-alpine AS runtime
-WORKDIR /app
-RUN corepack enable
-ENV NODE_ENV=production
-
-COPY --from=build /app/build ./build
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/package.json ./package.json
-
-EXPOSE 3000
-CMD ["node", "build"]
-```
-
-### 2.8 Compose it — just the app and Postgres
-
-**Action:** create `docker-compose.yml`:
-```yaml
-services:
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    env_file: .env
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    ports:
-      - "5432:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  app:
-    build: .
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-    env_file: .env
-    ports:
-      - "3000:3000"
-
-volumes:
-  pgdata:
-```
-
-### 2.9 Set the baseline environment
-
-**Action:** create `.env`:
-```bash
-POSTGRES_USER=conduit
-POSTGRES_PASSWORD=conduit
-POSTGRES_DB=conduit
-DATABASE_URL=postgresql://conduit:conduit@postgres:5432/conduit?sslmode=disable
-PORT=3000
-ORIGIN=http://localhost:3000
-```
-
-## 3. Bring it up — and prove there's nothing to see
-
-Why: this beat is the entire setup for the rest of the demo. A normal, working app, backed by a real database, with zero visibility into what it's doing.
-
-**Action:**
-```bash
+cp .env.example .env
 docker compose up --build
 ```
-Open `http://localhost:3000`, register an account, write a comment. It works. Ask the room: *"so — where would you even look, if this were slow?"* Let that sit for a second.
+
+## 3. Prove there's nothing to see
+
+Why: this beat is the entire setup for the rest of the demo.
+
+**Action:** open `http://localhost:3000`, register an account, write a comment. It works. Ask the room: *"so — where would you even look, if this were slow?"* Let that sit for a second.
 
 **Action:** tear it down.
 ```bash
 docker compose down
 ```
 
-## 4. Now instrument it
+## 4. Instrument it
 
 Why: same app, same database — we're adding visibility, not rebuilding anything.
 
@@ -194,7 +60,7 @@ mkdir -p alloy
 
 Why: this flag makes SvelteKit wrap its own internals — routing, `load`, actions — in spans automatically.
 
-**Action:** update `svelte.config.js`'s `kit` block:
+**Action:** add to `svelte.config.js`'s `kit` block:
 ```js
 kit: {
   adapter: adapter(),
@@ -284,45 +150,18 @@ if (browser) {
 
 Why: receives OTLP from the backend, scrapes Postgres, forwards both to Grafana Cloud, authenticated.
 
-**Action:** create `alloy/config.alloy` — full content is in [README §2.4](README.md#24-collector-grafana-alloy); copy-paste it.
+**Action:** create `alloy/config.alloy` — full content is in [README's "Collector: Grafana Alloy"](README.md#collector-grafana-alloy); copy-paste it.
 
 ### 4.6 Add Alloy to the compose file
 
-**Action:** add to `docker-compose.yml`'s `app` service and add an `alloy` service:
-```yaml
-  app:
-    # ...unchanged...
-    depends_on:
-      postgres:
-        condition: service_healthy
-      alloy:
-        condition: service_started
-
-  alloy:
-    image: grafana/alloy:latest
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=${PUBLIC_APP_ENV}
-    volumes:
-      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
-    command:
-      - run
-      - --server.http.listen-addr=0.0.0.0:12345
-      - /etc/alloy/config.alloy
-    ports:
-      - "12345:12345"
-    depends_on:
-      postgres:
-        condition: service_healthy
-```
+**Action:** add to `docker-compose.yml`'s `app` service and add an `alloy` service — full content is in [README's "Bring the alloy service into docker-compose"](README.md#bring-the-alloy-service-into-docker-compose); copy-paste it.
 
 ### 4.7 Add the rest of the environment
 
 **Action:** append to `.env`:
 ```bash
-PUBLIC_APP_ENV=live-demo
 OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4317
+PUBLIC_APP_ENV=live-demo
 PUBLIC_FARO_COLLECTOR_URL=<from Setup>
 GRAFANA_CLOUD_OTLP_ENDPOINT=<from Setup>
 GRAFANA_CLOUD_INSTANCE_ID=<from Setup>
@@ -372,10 +211,14 @@ Why: give them the one sentence to remember.
 
 **Action:** say it plainly — *"Same app, same click. The only thing that changed between step 3 and step 7 is that we can now see it."* Then stop talking.
 
+## The one-command version of Step 4
+
+If you're re-running this and don't need to teach the file-by-file version, `scripts/instrument.sh` does all of 4.1–4.7 in one pass. See [README's "Do it with one command instead"](README.md#do-it-with-one-command-instead).
+
 ## If something breaks on stage
 
 - App won't load → check `docker compose ps`, all services should say healthy/running.
 - No trace shows up → check `docker compose logs alloy` for `401` (bad token) — see README Troubleshooting.
 - Nothing in Frontend Observability → `PUBLIC_FARO_COLLECTOR_URL` typo is the usual cause.
 
-Full explanations and the one-shot version of all of Step 2 + Step 4 (`scripts/instrument.sh`) live in [`README.md`](README.md).
+Full explanations live in [`README.md`](README.md).
