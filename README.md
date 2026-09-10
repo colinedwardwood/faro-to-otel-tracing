@@ -134,7 +134,7 @@ http://localhost:3000
 
 Matching is exact against the full origin (scheme + host + port), not just the hostname — a single `*` wildcard is allowed if you need to cover more than one (`http://localhost:*`), but avoid a bare `*` for anything you care about, since it lets anyone submit data to your endpoint. Allow ~2 minutes for a saved change to actually take effect.
 
-**Choose your package type and install Faro.** The Cloud UI gives you the `npm` form; here's the `pnpm` equivalent since that's what this app uses:
+**Choose your package type and install Faro:** select **NPM** (not Yarn — we're using pnpm, which is npm-registry-compatible; not CDN — we're importing this as a real package, not a `<script>` tag). Here's the `pnpm` equivalent of the `npm install` command the UI gives you:
 
 ```bash
 pnpm add @grafana/faro-web-sdk @grafana/faro-web-tracing
@@ -142,7 +142,7 @@ pnpm add @grafana/faro-web-sdk @grafana/faro-web-tracing
 
 **Session settings.** The Cloud UI also lets you set a session **Sampling Rate** (default 100%, i.e. every session tracked) and toggle **Persistent sessions** (sticky sessions that survive closing the tab, default off). Leave both at their defaults for this guide — they map to a `sessionTracking: { samplingRate, persistent }` block on `initializeFaro` that you only need to add if you actually change them from the defaults shown in the UI.
 
-**Add Faro to your application.** The UI's own snippet — which we're matching structurally — looks like this:
+**Add Faro to your application:** select **Web**, not **React** — SvelteKit isn't React, and "Web" is the plain-JS SDK usage this guide's code actually is. The UI's own snippet — which we're matching structurally — looks like this:
 
 ```js
 import { getWebInstrumentations, initializeFaro } from '@grafana/faro-web-sdk';
