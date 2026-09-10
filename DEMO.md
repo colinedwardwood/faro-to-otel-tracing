@@ -120,15 +120,25 @@ pnpm add @opentelemetry/api @opentelemetry/sdk-node \
 
 Why: this flag makes SvelteKit wrap its own internals — routing, `load`, actions — in spans automatically.
 
-**Action** (from `faro-to-otel-tracing/app/`): add to `svelte.config.js`'s `kit` block:
+**Action** (from `faro-to-otel-tracing/app/`): replace `svelte.config.js` — the only change from what's already there is the `experimental` block:
 ```js
-kit: {
-  adapter: adapter(),
-  experimental: {
-    instrumentation: { server: true },
-    tracing: { server: true }
-  }
-}
+import adapter from '@sveltejs/adapter-node';
+
+/** @type {import('@sveltejs/kit').Config} */
+const config = {
+	compilerOptions: {
+		runes: true
+	},
+	kit: {
+		adapter: adapter(),
+		experimental: {
+			instrumentation: { server: true },
+			tracing: { server: true }
+		}
+	}
+};
+
+export default config;
 ```
 
 ### 4.6 Start OpenTelemetry before anything else loads
