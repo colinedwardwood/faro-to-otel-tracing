@@ -165,6 +165,8 @@ initializeFaro({
 });
 ```
 
+**Copy the `url` value out of your own version of that snippet** — it'll look like `https://faro-collector-<region>.grafana.net/collect/<32-character-hex-app-key>` — and put it in `.env` as `PUBLIC_FARO_COLLECTOR_URL`. That's the one value from the Cloud UI's snippet you carry over by hand; everything else below is either identical every time (the imports, the instrumentations array) or deliberately parameterized instead of hardcoded (`app.name`, `app.environment`), for the reason right after this.
+
 We're wrapping that in a small module so it survives Vite's dev-mode HMR without double-initializing, and so the collector URL and environment name come from our own env vars rather than being hardcoded. `src/lib/faro.js`:
 
 ```js
