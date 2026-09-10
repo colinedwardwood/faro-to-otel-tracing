@@ -167,7 +167,13 @@ initializeFaro({
 
 **Copy the `url` value out of your own version of that snippet** — it'll look like `https://faro-collector-<region>.grafana.net/collect/<32-character-hex-app-key>` — and put it in `.env` as `PUBLIC_FARO_COLLECTOR_URL`. That's the one value from the Cloud UI's snippet you carry over by hand; everything else below is either identical every time (the imports, the instrumentations array) or deliberately parameterized instead of hardcoded (`app.name`, `app.environment`), for the reason right after this.
 
-We're wrapping that in a small module so it survives Vite's dev-mode HMR without double-initializing, and so the collector URL and environment name come from our own env vars rather than being hardcoded. `src/lib/faro.js`:
+We're wrapping that in a small module — three differences from the Cloud UI's snippet above, each for a specific reason, nothing about what Faro actually does or observes changes:
+
+1. **The Cloud UI's snippet calls `initializeFaro()` directly at module scope; ours wraps it in a function with a guard (`if (faro) return faro`).** That snippet assumes it's pasted into an entrypoint that runs exactly once per page load. That's not true here — `src/hooks.client.js` (next) gets picked up by Vite's dev-server hot-module-reload, so without the guard, every edit-triggered reload during `pnpm run dev` would call `initializeFaro()` again: duplicate error listeners, duplicate page-view counting. The guard is a one-line tax specifically for Vite dev mode; it's a no-op in production.
+2. **The Cloud UI's snippet hardcodes `url` and `app.environment`; ours takes them as function arguments**, read from `.env` at runtime (`PUBLIC_FARO_COLLECTOR_URL`, `PUBLIC_APP_ENV`) instead of baked into the source at build time. Their instructions assume you're pasting a real, private collector URL into your own private codebase. This repo is public — hardcoding a live collector URL tied to a real account into committed source means anyone reading the guide could send data into that account indefinitely (see the callout above about copying the `url` value into `.env` instead). Parameterizing it also means the same built Docker image works against different Grafana Cloud accounts or environments without a rebuild.
+3. **Ours returns the `faro` instance; the Cloud UI's snippet doesn't.** Minor — it lets other code call `initFaro()` later and get the live instance back (to call `faro.api.pushEvent(...)` from elsewhere, for instance), which a fire-and-forget snippet has no need for.
+
+`src/lib/faro.js`:
 
 ```js
 import { getWebInstrumentations, initializeFaro } from '@grafana/faro-web-sdk';
