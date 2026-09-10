@@ -87,6 +87,8 @@ export function initFaro(collectorUrl, environment) {
 }
 ```
 
+**If someone asks why this doesn't match the snippet Grafana Cloud gave them:** it's the same instrumentation, wrapped — a function + a guard so Vite's dev-mode hot-reload can't double-initialize it, and `url`/`environment` as arguments instead of hardcoded so a live collector URL never ends up committed to a public repo. Full breakdown: [README](README.md#frontend-grafana-faro-web-sdk).
+
 ### 4.3 Load Faro on boot
 
 Why: `hooks.client.js` runs once when the app boots in the browser — the earliest hook there is.
