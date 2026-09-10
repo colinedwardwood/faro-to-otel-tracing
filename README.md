@@ -2,7 +2,7 @@
 
 Most "observability" setups stop at the server. You get a nice trace for your API handler, maybe a span or two around the database call, and then... nothing. The click that actually kicked the whole thing off, sitting in the browser, is invisible. When someone reports "the app was slow for me around 2pm," you're stuck guessing whether the problem was their network, a slow render, a chunky bundle, or an actual backend issue.
 
-This guide wires up the other half. By the end you'll have a single trace that starts at a click in the browser, runs through a SvelteKit server action, and ends at the exact Postgres query it triggered — all connected by one trace ID, all visible in one waterfall in Grafana Cloud.
+This guide wires up the other half. By the end you'll have a single trace that starts at a click in the browser, runs through a SvelteKit server action, and ends at the exact Postgres query it triggered. One trace ID, one waterfall, visible in Grafana Cloud.
 
 The stack:
 
@@ -16,7 +16,7 @@ The stack:
 
 `app/` is a working checkout of `sveltejs/realworld`, with one thing changed. The stock app doesn't have a database — its `+page.server.js` load functions call a public hosted demo API over the internet, and it ships with `@sveltejs/adapter-vercel`. That's fine for a frontend showcase; it's just not useful for a guide about tracing a request down to a SQL query.
 
-So `app/` swaps in a real, local Postgres database instead, and nothing else. Every route, every `.svelte` component, every bit of UI is exactly as upstream scaffolded it. What actually changed:
+So `app/` swaps in a real, local Postgres database instead, and nothing else. Every route, every `.svelte` component, every bit of UI is exactly as upstream scaffolded it. What actually changed is small:
 
 | File | What it does here |
 |---|---|
@@ -62,12 +62,12 @@ flowchart LR
     PE -- "remote_write, basic auth" --> Cloud
 ```
 
-Two things worth pointing at directly:
+Two things to point out directly:
 
-- The browser talks to **two** places: your own app (form posts, fetches) and Grafana Cloud directly (Faro's RUM payload). It does not go through Alloy — the Faro collector endpoint is designed to be called straight from client-side JS, the same way you'd embed an analytics snippet.
+- The browser talks to **two** places: your own app (form posts, fetches) and Grafana Cloud directly (Faro's RUM payload). It does not go through Alloy. The Faro collector endpoint is designed to be called straight from client-side JS, the same way you'd embed an analytics snippet.
 - Alloy's job shrinks to what actually needs a server-side component: receiving OTLP from your Node process (which needs a stable internal endpoint) and scraping Postgres (which the browser obviously can't do itself).
 
-The arrow that makes this a *connected* trace rather than three separate dashboards is the top one — the `traceparent` header riding along on the browser's own request to your server. That's covered in detail in [Connecting frontend and backend traces](#connecting-frontend-and-backend-traces).
+The top arrow is what makes this a *connected* trace instead of three separate dashboards: the `traceparent` header riding along on the browser's own request to your server. Covered in detail in [Connecting frontend and backend traces](#connecting-frontend-and-backend-traces).
 
 ## Prerequisites
 
@@ -78,7 +78,7 @@ The arrow that makes this a *connected* trace rather than three separate dashboa
 
 ## Environment variables
 
-Every credential and endpoint this stack needs lives in one `.env` file (gitignored — never commit it), loaded by Docker Compose and (for Alloy) read at startup via `sys.env(...)`. `app/.env.example` already has all of it, top to bottom — the observability half sits there as inert placeholders until you fill in real values and actually instrument the app.
+Every credential and endpoint this stack needs lives in one `.env` file (gitignored, never commit it), loaded by Docker Compose and, for Alloy, read at startup via `sys.env(...)`. `app/.env.example` already has all of it, top to bottom. The observability half just sits there as inert placeholders until you fill in real values and actually instrument the app.
 
 | Variable | Used by | Where it comes from |
 |---|---|---|
@@ -124,9 +124,9 @@ docker compose down
 
 ### Frontend: Grafana Faro Web SDK
 
-Grafana Cloud → **Frontend Observability** → your app → **Configure** walks you through this exact setup, and it's worth following its snippet almost verbatim rather than inventing your own shape — that page is also where `PUBLIC_FARO_COLLECTOR_URL` comes from.
+Grafana Cloud → **Frontend Observability** → your app → **Configure** walks you through this exact setup, and its snippet is worth following almost verbatim rather than inventing your own shape. That page is also where `PUBLIC_FARO_COLLECTOR_URL` comes from.
 
-**Set the CORS Allowed Origins first — it's easy to miss and it fails silently.** Same page, usually a separate tab or section from the SDK snippet. If it's empty, Grafana blocks every request from the browser with no error surfaced anywhere obvious — the POST just gets rejected by CORS before it leaves the browser. Set it to the app's actual origin:
+Set the CORS Allowed Origins first, before anything else on that page. It's usually a separate tab or section from the SDK snippet, and it's easy to skip past because nothing about it fails loudly: leave it empty and Grafana just blocks every request from the browser with no error surfaced anywhere obvious, the POST simply gets rejected by CORS before it leaves the browser. Set it to the app's actual origin:
 
 ```
 http://localhost:3000
@@ -134,7 +134,7 @@ http://localhost:3000
 
 Matching is exact against the full origin (scheme + host + port), not just the hostname — a single `*` wildcard is allowed if you need to cover more than one (`http://localhost:*`), but avoid a bare `*` for anything you care about, since it lets anyone submit data to your endpoint. Allow ~2 minutes for a saved change to actually take effect.
 
-**Choose your package type and install Faro:** select **NPM** (not Yarn — we're using pnpm, which is npm-registry-compatible; not CDN — we're importing this as a real package, not a `<script>` tag). Here's the `pnpm` equivalent of the `npm install` command the UI gives you:
+**Choose your package type and install Faro:** select **NPM**. Not Yarn (we're using pnpm, which is npm-registry-compatible). Not CDN (we're importing this as a real package, not a `<script>` tag). Here's the `pnpm` equivalent of the `npm install` command the UI gives you:
 
 ```bash
 pnpm add @grafana/faro-web-sdk @grafana/faro-web-tracing
@@ -142,7 +142,7 @@ pnpm add @grafana/faro-web-sdk @grafana/faro-web-tracing
 
 **Session settings.** The Cloud UI also lets you set a session **Sampling Rate** (default 100%, i.e. every session tracked) and toggle **Persistent sessions** (sticky sessions that survive closing the tab, default off). Leave both at their defaults for this guide — they map to a `sessionTracking: { samplingRate, persistent }` block on `initializeFaro` that you only need to add if you actually change them from the defaults shown in the UI.
 
-**Add Faro to your application:** select **Web**, not **React** — SvelteKit isn't React, and "Web" is the plain-JS SDK usage this guide's code actually is. The UI's own snippet — which we're matching structurally — looks like this:
+**Add Faro to your application:** select **Web**, not **React**. SvelteKit isn't React, and "Web" is the plain-JS SDK usage this guide's code actually is. The UI's own snippet, which we're matching structurally, looks like this:
 
 ```js
 import { getWebInstrumentations, initializeFaro } from '@grafana/faro-web-sdk';
@@ -165,13 +165,13 @@ initializeFaro({
 });
 ```
 
-**Copy the `url` value out of your own version of that snippet** — it'll look like `https://faro-collector-<region>.grafana.net/collect/<32-character-hex-app-key>` — and put it in `.env` as `PUBLIC_FARO_COLLECTOR_URL`. That's the one value from the Cloud UI's snippet you carry over by hand; everything else below is either identical every time (the imports, the instrumentations array) or deliberately parameterized instead of hardcoded (`app.name`, `app.environment`), for the reason right after this.
+Copy the `url` value out of your own version of that snippet (it'll look like `https://faro-collector-<region>.grafana.net/collect/<32-character-hex-app-key>`) and put it in `.env` as `PUBLIC_FARO_COLLECTOR_URL`. That's the one value from the Cloud UI's snippet you carry over by hand. Everything else below is either identical every time (the imports, the instrumentations array) or deliberately parameterized instead of hardcoded (`app.name`, `app.environment`) — the reason for that is right after this.
 
-We're wrapping that in a small module — three differences from the Cloud UI's snippet above, each for a specific reason, nothing about what Faro actually does or observes changes:
+We're wrapping that in a small module, which means three differences from the Cloud UI's snippet above. Each has a specific reason, and none of them change what Faro actually does or observes:
 
-1. **The Cloud UI's snippet calls `initializeFaro()` directly at module scope; ours wraps it in a function with a guard (`if (faro) return faro`).** That snippet assumes it's pasted into an entrypoint that runs exactly once per page load. That's not true here — `src/hooks.client.js` (next) gets picked up by Vite's dev-server hot-module-reload, so without the guard, every edit-triggered reload during `pnpm run dev` would call `initializeFaro()` again: duplicate error listeners, duplicate page-view counting. The guard is a one-line tax specifically for Vite dev mode; it's a no-op in production.
-2. **The Cloud UI's snippet hardcodes `url` and `app.environment`; ours takes them as function arguments**, read from `.env` at runtime (`PUBLIC_FARO_COLLECTOR_URL`, `PUBLIC_APP_ENV`) instead of baked into the source at build time. Their instructions assume you're pasting a real, private collector URL into your own private codebase. This repo is public — hardcoding a live collector URL tied to a real account into committed source means anyone reading the guide could send data into that account indefinitely (see the callout above about copying the `url` value into `.env` instead). Parameterizing it also means the same built Docker image works against different Grafana Cloud accounts or environments without a rebuild.
-3. **Ours returns the `faro` instance; the Cloud UI's snippet doesn't.** Minor — it lets other code call `initFaro()` later and get the live instance back (to call `faro.api.pushEvent(...)` from elsewhere, for instance), which a fire-and-forget snippet has no need for.
+1. **The Cloud UI's snippet calls `initializeFaro()` directly at module scope; ours wraps it in a function with a guard (`if (faro) return faro`).** That snippet assumes it's pasted into an entrypoint that runs exactly once per page load. That's not true here: `src/hooks.client.js` (next) gets picked up by Vite's dev-server hot-module-reload, so without the guard, every edit-triggered reload during `pnpm run dev` would call `initializeFaro()` again, producing duplicate error listeners and duplicate page-view counting. The guard is a one-line tax specifically for Vite dev mode. It's a no-op in production.
+2. **The Cloud UI's snippet hardcodes `url` and `app.environment`; ours takes them as function arguments**, read from `.env` at runtime (`PUBLIC_FARO_COLLECTOR_URL`, `PUBLIC_APP_ENV`) instead of baked into the source at build time. Their instructions assume you're pasting a real, private collector URL into your own private codebase. This repo is public, and hardcoding a live collector URL tied to a real account into committed source means anyone reading the guide could send data into that account indefinitely (see the callout above about copying the `url` value into `.env` instead). Parameterizing it also means the same built Docker image works against different Grafana Cloud accounts or environments without a rebuild.
+3. **Ours returns the `faro` instance; the Cloud UI's snippet doesn't.** Minor, but it lets other code call `initFaro()` later and get the live instance back, to call `faro.api.pushEvent(...)` from elsewhere for instance, which a fire-and-forget snippet has no need for.
 
 `src/lib/faro.js`:
 
@@ -216,7 +216,7 @@ if (browser) {
 }
 ```
 
-`PUBLIC_FARO_COLLECTOR_URL` points straight at the collector URL from that Configure page — see [Environment variables](#environment-variables) above. We're reading it via `$env/dynamic/public` rather than `$env/static/public` specifically so the same built Docker image works against different collector URLs without a rebuild — static public vars get baked into the client bundle at build time, dynamic ones are read from the container's environment at request time.
+`PUBLIC_FARO_COLLECTOR_URL` points straight at the collector URL from that Configure page (see [Environment variables](#environment-variables) above). We're reading it via `$env/dynamic/public` rather than `$env/static/public` specifically so the same built Docker image works against different collector URLs without a rebuild. Static public vars get baked into the client bundle at build time; dynamic ones are read from the container's environment at request time.
 
 Notice the `TracingInstrumentation()` above is bare, with no options — that's not a simplification on our part, it's exactly what the Cloud UI's own snippet gives you. Whether that's enough for full continuity depends on one thing, covered next.
 
@@ -287,11 +287,11 @@ sdk.start();
 
 Ordering matters more here than it looks like it should. `getNodeAutoInstrumentations()` works by monkey-patching modules (`http`, `pg`, …) the first time they're `require`'d. If your app imports `pg` before this SDK starts, the patch never applies and you silently get no database spans. The `instrumentation.server` flag exists specifically to solve that — it tells the build produced by `adapter-node` to `--import` this file before your app's own entrypoint, so plain `node build` in the Dockerfile's `CMD` picks it up automatically, no extra flags needed.
 
-This is also why you get Postgres query spans for free, without instrumenting `pool.query(...)` calls by hand: `@opentelemetry/instrumentation-pg` ships inside `auto-instrumentations-node`, and because our `pg` import in `db.js` is a totally ordinary one, it gets patched right along with everything else. Every query in `api.js` now produces a real child span with the SQL text attached — actual per-query tracing, not to be confused with the Postgres *metrics* Alloy scrapes below, which is a different, complementary layer (connection counts, cache hit ratio — the stuff a single trace can't tell you).
+This is also why you get Postgres query spans for free, without instrumenting `pool.query(...)` calls by hand: `@opentelemetry/instrumentation-pg` ships inside `auto-instrumentations-node`, and because our `pg` import in `db.js` is a totally ordinary one, it gets patched right along with everything else. Every query in `api.js` now produces a real child span with the SQL text attached. That's actual per-query tracing, not to be confused with the Postgres *metrics* Alloy scrapes below, which is a different, complementary layer: connection counts, cache hit ratio, the stuff a single trace can't tell you.
 
 ### Connecting frontend and backend traces
 
-This is the mechanism that turns two separate instrumentation efforts into one observability story, so it's worth being explicit about it rather than just asserting "it works."
+This is the mechanism that turns two separate instrumentation efforts into one observability story. It's easy to just assert "it works," so here's what actually happens, step by step:
 
 1. The browser submits the login form (or any `fetch` call fires). Faro's `TracingInstrumentation` intercepts it and starts a client-side span.
 2. Because the request target (`http://localhost:3000/...`) is the **same origin** the page itself was loaded from, the underlying instrumentation attaches a [W3C `traceparent` header](https://www.w3.org/TR/trace-context/) automatically — no extra config required. It looks something like `traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01`, encoding the trace ID, the parent span ID, and sampling flags.
@@ -470,21 +470,21 @@ otelcol.auth.basic "grafana_cloud" {
 }
 ```
 
-A few things worth being explicit about, since most of this differs from what you'd write starting from a blank file:
+Most of this differs from what you'd write starting from a blank file, so here's what each piece is actually doing:
 
 - **`otelcol.receiver.prometheus`** is the bridge component that lets a `prometheus.scrape` target's output flow into an otelcol pipeline — it's named `"postgres"` here since it sits alongside the receiver for the backend's own OTLP traffic in the same file.
-- **`resourcedetection`** stamps every span, metric, and log with attributes about *where Alloy itself is running* — container/host identity, mainly — which is a genuinely useful thing to have on data whether or not you asked for it, hence why the Cloud UI defaults to including it rather than leaving it as a manual add-on.
-- **The two `transform` processors exist for a very specific reason**: `getNodeAutoInstrumentations()` on the Node side (and `resourcedetection`'s own `system` detector) attach a pile of process/OS resource attributes — PID, executable path, OS description, and so on — that are mostly noise once you're looking at a dashboard rather than a single trace. The first `transform` deletes them. The second exists because Prometheus/Mimir metrics don't have a concept of "resource" attributes the way traces and logs do — only per-series labels — so `deployment.environment` and `service.version` have to be explicitly copied from the resource onto every metric *datapoint* or they're silently dropped rather than becoming queryable labels.
-- **`otelcol.auth.basic`** turns your instance ID and API token into the Basic Auth header Grafana Cloud's OTLP gateway expects, and it's attached to the *exporter*, not the receiver — Alloy itself doesn't require auth from your own app, only Grafana Cloud does. Grafana Cloud's own generated snippet for this hardcodes both values directly into `config.alloy` (`username = "477393"`, `password = "your-grafana-token"` — literally your API token, in plaintext, in a file you're one `git add .` away from committing). We're reading both from `sys.env(...)` instead, same as everywhere else in this guide, specifically so that never happens.
-- **The exporter is `otelcol.exporter.otlphttp`, not `otelcol.exporter.otlp`.** Grafana Cloud's OTLP gateway only accepts OTLP over HTTP — the endpoint URL even has an HTTP path on it (`/otlp`). The plain `otelcol.exporter.otlp` component defaults to gRPC, and pointing it at this endpoint fails with a gRPC resolver error (`no children to pick from`) rather than anything that obviously says "wrong protocol." I hit exactly this running the stack against a real Grafana Cloud account while writing this guide — if you see that error, this is almost certainly why.
+- **`resourcedetection`** stamps every span, metric, and log with attributes about *where Alloy itself is running*, container/host identity mainly. That's genuinely useful to have on data whether or not you asked for it, which is why the Cloud UI defaults to including it rather than leaving it as a manual add-on.
+- **The two `transform` processors exist for a very specific reason.** `getNodeAutoInstrumentations()` on the Node side (and `resourcedetection`'s own `system` detector) attach a pile of process/OS resource attributes: PID, executable path, OS description, and so on. Mostly noise once you're looking at a dashboard rather than a single trace, so the first `transform` deletes them. The second exists because Prometheus/Mimir metrics don't have a concept of "resource" attributes the way traces and logs do, only per-series labels, so `deployment.environment` and `service.version` have to be explicitly copied from the resource onto every metric *datapoint* or they're silently dropped rather than becoming queryable labels.
+- **`otelcol.auth.basic`** turns your instance ID and API token into the Basic Auth header Grafana Cloud's OTLP gateway expects, and it's attached to the *exporter*, not the receiver. Alloy itself doesn't require auth from your own app, only Grafana Cloud does. Grafana Cloud's own generated snippet for this hardcodes both values directly into `config.alloy` (`username = "477393"`, `password = "your-grafana-token"`, literally your API token in plaintext, in a file you're one `git add .` away from committing). We're reading both from `sys.env(...)` instead, same as everywhere else in this guide, specifically so that never happens.
+- **The exporter is `otelcol.exporter.otlphttp`, not `otelcol.exporter.otlp`.** Grafana Cloud's OTLP gateway only accepts OTLP over HTTP, and the endpoint URL even has an HTTP path on it (`/otlp`). The plain `otelcol.exporter.otlp` component defaults to gRPC, and pointing it at this endpoint fails with a gRPC resolver error (`no children to pick from`) rather than anything that obviously says "wrong protocol." I hit exactly this running the stack against a real Grafana Cloud account while writing this guide. If you see that error, this is almost certainly why.
 
 One more thing worth calling out: the Postgres user in `DATABASE_URL` is the same one the app itself uses, for simplicity. Past a local demo, give the exporter its own read-only role instead — `GRANT pg_monitor TO exporter_user;` is enough for the stats views it needs, and there's no reason to hand it your application credentials.
 
-The `add_resource_attributes_as_metric_attributes` processor above only does something useful if a `deployment.environment` resource attribute actually exists on the data flowing through it — our Node backend's own resource (in `instrumentation.server.js`) only sets `service.name` and `service.version`. Rather than touch the app for this, we set it once, centrally, on the collector — see the `alloy` service's `OTEL_RESOURCE_ATTRIBUTES` below, which is the standard OpenTelemetry environment variable every "env" resource detector — this one included — already knows to read.
+The `add_resource_attributes_as_metric_attributes` processor above only does something useful if a `deployment.environment` resource attribute actually exists on the data flowing through it, and our Node backend's own resource (in `instrumentation.server.js`) only sets `service.name` and `service.version`. Rather than touch the app for this, we set it once, centrally, on the collector: see the `alloy` service's `OTEL_RESOURCE_ATTRIBUTES` below, which is the standard OpenTelemetry environment variable every "env" resource detector (this one included) already knows to read.
 
 ### Uncomment the alloy service in docker-compose
 
-`docker-compose.yml` already has the `alloy` service written out — commented out, specifically so the baseline app comes up with nowhere to send telemetry even by accident. Uncomment two spots: the `alloy` entry under `app`'s `depends_on`, and the whole `alloy:` service block below it. Nothing to retype — it's already the right shape:
+`docker-compose.yml` already has the `alloy` service written out, just commented out, specifically so the baseline app comes up with nowhere to send telemetry even by accident. Uncomment two spots: the `alloy` entry under `app`'s `depends_on`, and the whole `alloy:` service block below it. Nothing to retype, it's already the right shape:
 
 ```yaml
   app:
@@ -570,7 +570,7 @@ It refuses to run if it looks like the app is instrumented already, and it does 
 - **Frontend and backend traces show up separately in Tempo, never merged.** For this app, that almost always means the browser request wasn't actually same-origin — a mismatched port or `http` vs. `https` is enough to break it. If you've split the frontend and backend onto genuinely different origins, you additionally need `propagateTraceHeaderCorsUrls` set on `TracingInstrumentation` to match the backend's real origin (see [Connecting frontend and backend traces](#connecting-frontend-and-backend-traces)).
 - **No spans from the backend at all.** Confirm both `experimental.instrumentation.server` and `experimental.tracing.server` are set in `svelte.config.js`, and that you rebuilt the image afterward — this is a build-time flag, not a runtime one.
 - **Form posts fail with a 403.** SvelteKit's CSRF check validates the request's origin against `ORIGIN`. Missing or wrong value in `.env` is almost always the cause.
-- **Nothing shows up in Frontend Observability.** Three possible causes: (1) `PUBLIC_FARO_COLLECTOR_URL` wasn't copied exactly (including the trailing app key) or didn't reach the client bundle — it has to be prefixed `PUBLIC_` and present in the app container's environment at request time; (2) the CORS Allowed Origins field on the Cloud Portal's Configure page is empty or doesn't match — check the browser's own console/network tab for a CORS error, and remember changes take ~2 minutes to propagate after saving; (3) **the browser console shows `Cross-Origin Request Blocked... Reason: CORS request did not succeed. Status code: (null)`** — that specific error (no status code at all, request never completed) is not a server-side CORS misconfiguration, it's something on the client blocking the request before it leaves the browser. Firefox's Enhanced Tracking Protection and ad-blocker/privacy extensions both commonly classify `/collect/` endpoints as trackers and silently kill them. Try a private window with extensions off, or a different browser, before touching any config — you can confirm the server side is fine independently with `curl -i -X OPTIONS <collector-url> -H "Origin: <your-origin>" -H "Access-Control-Request-Method: POST" -H "Access-Control-Request-Headers: content-type,x-faro-session-id"` and checking for a `204` with matching `access-control-allow-origin`/`access-control-allow-headers`.
+- **Nothing shows up in Frontend Observability.** Three possible causes. (1) `PUBLIC_FARO_COLLECTOR_URL` wasn't copied exactly (including the trailing app key) or didn't reach the client bundle: it has to be prefixed `PUBLIC_` and present in the app container's environment at request time. (2) The CORS Allowed Origins field on the Cloud Portal's Configure page is empty or doesn't match: check the browser's own console/network tab for a CORS error, and remember changes take ~2 minutes to propagate after saving. (3) **The browser console shows `Cross-Origin Request Blocked... Reason: CORS request did not succeed. Status code: (null)`.** That specific error (no status code at all, request never completed) is not a server-side CORS misconfiguration; it's something on the client blocking the request before it leaves the browser. Firefox's Enhanced Tracking Protection and ad-blocker/privacy extensions both commonly classify `/collect/` endpoints as trackers and silently kill them. Try a private window with extensions off, or a different browser, before touching any config. You can confirm the server side is fine independently with `curl -i -X OPTIONS <collector-url> -H "Origin: <your-origin>" -H "Access-Control-Request-Method: POST" -H "Access-Control-Request-Headers: content-type,x-faro-session-id"` and checking for a `204` with matching `access-control-allow-origin`/`access-control-allow-headers`.
 - **Alloy logs `401 Unauthorized` talking to the OTLP gateway.** Wrong instance ID, wrong token, or a token missing the `traces:write`/`metrics:write` scopes. Regenerate it from Cloud Portal → Access Policies rather than guessing at the scope names.
 - **Alloy logs `Exporting failed... rpc error: code = Unavailable desc = no children to pick from`.** This is a gRPC resolver error, and it means the exporter is configured for gRPC against an endpoint that only speaks HTTP. Make sure `config.alloy` uses `otelcol.exporter.otlphttp`, not `otelcol.exporter.otlp` — see the callout in [Collector: Grafana Alloy](#collector-grafana-alloy).
 - **Docker build fails on `pnpm prune --prod` with `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`.** pnpm refuses to prune non-interactively without being told it's a CI environment. `ENV CI=true` before the prune step in `app/Dockerfile` fixes it — it's already there, but easy to lose if you're customizing the build stage.
