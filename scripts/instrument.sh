@@ -83,7 +83,7 @@ EOF
 
 echo "==> src/lib/faro.js"
 cat > src/lib/faro.js <<'EOF'
-import { initializeFaro, getWebInstrumentations } from '@grafana/faro-web-sdk';
+import { getWebInstrumentations, initializeFaro } from '@grafana/faro-web-sdk';
 import { TracingInstrumentation } from '@grafana/faro-web-tracing';
 
 let faro;
@@ -99,12 +99,11 @@ export function initFaro(collectorUrl, environment) {
       environment
     },
     instrumentations: [
+      // Mandatory, omits default instrumentations otherwise.
       ...getWebInstrumentations(),
-      new TracingInstrumentation({
-        instrumentationOptions: {
-          propagateTraceHeaderCorsUrls: [/^http:\/\/localhost:3000\/.*/]
-        }
-      })
+
+      // Tracing package to get end-to-end visibility for HTTP requests.
+      new TracingInstrumentation()
     ]
   });
 
@@ -647,6 +646,8 @@ services:
     image: grafana/alloy:latest
     restart: unless-stopped
     env_file: .env
+    environment:
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=${PUBLIC_APP_ENV}
     volumes:
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
     command:
@@ -665,16 +666,14 @@ EOF
 
 echo "==> alloy/config.alloy"
 cat > alloy/config.alloy <<'EOF'
-otelcol.receiver.otlp "backend" {
-  grpc {
-    endpoint = "0.0.0.0:4317"
-  }
-  http {
-    endpoint = "0.0.0.0:4318"
-  }
+otelcol.receiver.otlp "default" {
+  grpc { }
+  http { }
 
   output {
-    traces = [otelcol.processor.batch.default.input]
+    metrics = [otelcol.processor.resourcedetection.default.input]
+    logs    = [otelcol.processor.resourcedetection.default.input]
+    traces  = [otelcol.processor.resourcedetection.default.input]
   }
 }
 
@@ -685,10 +684,100 @@ prometheus.exporter.postgres "conduit_db" {
 prometheus.scrape "conduit_db" {
   targets         = prometheus.exporter.postgres.conduit_db.targets
   scrape_interval = "15s"
-  forward_to      = [otelcol.receiver.prometheus.default.receiver]
+  forward_to      = [otelcol.receiver.prometheus.postgres.receiver]
 }
 
-otelcol.receiver.prometheus "default" {
+otelcol.receiver.prometheus "postgres" {
+  output {
+    metrics = [otelcol.processor.resourcedetection.default.input]
+  }
+}
+
+otelcol.processor.resourcedetection "default" {
+  detectors = ["env", "system"]
+
+  system {
+    hostname_sources = ["os"]
+
+    resource_attributes {
+      host.id   { enabled = true }
+      host.name { enabled = true }
+    }
+  }
+
+  output {
+    metrics = [otelcol.processor.transform.drop_unneeded_resource_attributes.input]
+    logs    = [otelcol.processor.transform.drop_unneeded_resource_attributes.input]
+    traces  = [otelcol.processor.transform.drop_unneeded_resource_attributes.input]
+  }
+}
+
+otelcol.processor.transform "drop_unneeded_resource_attributes" {
+  error_mode = "ignore"
+
+  trace_statements {
+    context    = "resource"
+    statements = [
+      "delete_key(attributes, \"k8s.pod.start_time\")",
+      "delete_key(attributes, \"os.description\")",
+      "delete_key(attributes, \"os.type\")",
+      "delete_key(attributes, \"process.command_args\")",
+      "delete_key(attributes, \"process.executable.path\")",
+      "delete_key(attributes, \"process.pid\")",
+      "delete_key(attributes, \"process.runtime.description\")",
+      "delete_key(attributes, \"process.runtime.name\")",
+      "delete_key(attributes, \"process.runtime.version\")",
+    ]
+  }
+
+  metric_statements {
+    context    = "resource"
+    statements = [
+      "delete_key(attributes, \"k8s.pod.start_time\")",
+      "delete_key(attributes, \"os.description\")",
+      "delete_key(attributes, \"os.type\")",
+      "delete_key(attributes, \"process.command_args\")",
+      "delete_key(attributes, \"process.executable.path\")",
+      "delete_key(attributes, \"process.pid\")",
+      "delete_key(attributes, \"process.runtime.description\")",
+      "delete_key(attributes, \"process.runtime.name\")",
+      "delete_key(attributes, \"process.runtime.version\")",
+    ]
+  }
+
+  log_statements {
+    context    = "resource"
+    statements = [
+      "delete_key(attributes, \"k8s.pod.start_time\")",
+      "delete_key(attributes, \"os.description\")",
+      "delete_key(attributes, \"os.type\")",
+      "delete_key(attributes, \"process.command_args\")",
+      "delete_key(attributes, \"process.executable.path\")",
+      "delete_key(attributes, \"process.pid\")",
+      "delete_key(attributes, \"process.runtime.description\")",
+      "delete_key(attributes, \"process.runtime.name\")",
+      "delete_key(attributes, \"process.runtime.version\")",
+    ]
+  }
+
+  output {
+    metrics = [otelcol.processor.transform.add_resource_attributes_as_metric_attributes.input]
+    logs    = [otelcol.processor.batch.default.input]
+    traces  = [otelcol.processor.batch.default.input]
+  }
+}
+
+otelcol.processor.transform "add_resource_attributes_as_metric_attributes" {
+  error_mode = "ignore"
+
+  metric_statements {
+    context    = "datapoint"
+    statements = [
+      "set(attributes[\"deployment.environment\"], resource.attributes[\"deployment.environment\"])",
+      "set(attributes[\"service.version\"], resource.attributes[\"service.version\"])",
+    ]
+  }
+
   output {
     metrics = [otelcol.processor.batch.default.input]
   }
@@ -696,8 +785,9 @@ otelcol.receiver.prometheus "default" {
 
 otelcol.processor.batch "default" {
   output {
-    traces  = [otelcol.exporter.otlphttp.grafana_cloud.input]
     metrics = [otelcol.exporter.otlphttp.grafana_cloud.input]
+    logs    = [otelcol.exporter.otlphttp.grafana_cloud.input]
+    traces  = [otelcol.exporter.otlphttp.grafana_cloud.input]
   }
 }
 
