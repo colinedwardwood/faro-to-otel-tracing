@@ -21,8 +21,8 @@ services:
       postgres:
         condition: service_healthy
       # uncomment once you've uncommented the alloy service below
-      # alloy:
-      #   condition: service_started
+      alloy:
+        condition: service_started
     env_file: .env
     ports:
       - "3000:3000"
@@ -32,25 +32,25 @@ services:
   # "Instrument it" section. Left commented out here so the baseline
   # (before instrumenting anything) still comes up as just postgres + app,
   # with nowhere to send telemetry even by accident.
-  # alloy:
-  #   image: grafana/alloy:latest
-  #   restart: unless-stopped
-  #   env_file: .env
-  #   environment:
+  alloy:
+    image: grafana/alloy:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
   #     # picked up by config.alloy's resourcedetection "env" detector and
   #     # stamped onto every span/metric/log passing through Alloy
-  #     OTEL_RESOURCE_ATTRIBUTES: deployment.environment=${PUBLIC_APP_ENV}
-  #   volumes:
-  #     - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
-  #   command:
-  #     - run
-  #     - --server.http.listen-addr=0.0.0.0:12345
-  #     - /etc/alloy/config.alloy
-  #   ports:
-  #     - "12345:12345" # Alloy's own UI — a live graph of the pipeline, worth a look
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=${PUBLIC_APP_ENV}
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - /etc/alloy/config.alloy
+    ports:
+      - "12345:12345" # Alloy's own UI — a live graph of the pipeline, worth a look
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   pgdata:

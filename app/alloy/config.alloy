@@ -1,0 +1,139 @@
+otelcol.receiver.otlp "default" {
+  grpc { }
+  http { }
+
+  output {
+    metrics = [otelcol.processor.resourcedetection.default.input]
+    logs    = [otelcol.processor.resourcedetection.default.input]
+    traces  = [otelcol.processor.resourcedetection.default.input]
+  }
+}
+
+prometheus.exporter.postgres "conduit_db" {
+  data_source_names = [sys.env("DATABASE_URL")]
+}
+
+prometheus.scrape "conduit_db" {
+  targets         = prometheus.exporter.postgres.conduit_db.targets
+  scrape_interval = "15s"
+  forward_to      = [otelcol.receiver.prometheus.postgres.receiver]
+}
+
+otelcol.receiver.prometheus "postgres" {
+  output {
+    metrics = [otelcol.processor.resourcedetection.default.input]
+  }
+}
+
+otelcol.processor.resourcedetection "default" {
+  detectors = ["env", "system"]
+
+  system {
+    hostname_sources = ["os"]
+
+    resource_attributes {
+      host.id   { enabled = true }
+      host.name { enabled = true }
+    }
+  }
+
+  output {
+    metrics = [otelcol.processor.transform.drop_unneeded_resource_attributes.input]
+    logs    = [otelcol.processor.transform.drop_unneeded_resource_attributes.input]
+    traces  = [otelcol.processor.transform.drop_unneeded_resource_attributes.input]
+  }
+}
+
+otelcol.processor.transform "drop_unneeded_resource_attributes" {
+  error_mode = "ignore"
+
+  trace_statements {
+    context    = "resource"
+    statements = [
+      "delete_key(attributes, \"k8s.pod.start_time\")",
+      "delete_key(attributes, \"os.description\")",
+      "delete_key(attributes, \"os.type\")",
+      "delete_key(attributes, \"process.command_args\")",
+      "delete_key(attributes, \"process.executable.path\")",
+      "delete_key(attributes, \"process.pid\")",
+      "delete_key(attributes, \"process.runtime.description\")",
+      "delete_key(attributes, \"process.runtime.name\")",
+      "delete_key(attributes, \"process.runtime.version\")",
+    ]
+  }
+
+  metric_statements {
+    context    = "resource"
+    statements = [
+      "delete_key(attributes, \"k8s.pod.start_time\")",
+      "delete_key(attributes, \"os.description\")",
+      "delete_key(attributes, \"os.type\")",
+      "delete_key(attributes, \"process.command_args\")",
+      "delete_key(attributes, \"process.executable.path\")",
+      "delete_key(attributes, \"process.pid\")",
+      "delete_key(attributes, \"process.runtime.description\")",
+      "delete_key(attributes, \"process.runtime.name\")",
+      "delete_key(attributes, \"process.runtime.version\")",
+    ]
+  }
+
+  log_statements {
+    context    = "resource"
+    statements = [
+      "delete_key(attributes, \"k8s.pod.start_time\")",
+      "delete_key(attributes, \"os.description\")",
+      "delete_key(attributes, \"os.type\")",
+      "delete_key(attributes, \"process.command_args\")",
+      "delete_key(attributes, \"process.executable.path\")",
+      "delete_key(attributes, \"process.pid\")",
+      "delete_key(attributes, \"process.runtime.description\")",
+      "delete_key(attributes, \"process.runtime.name\")",
+      "delete_key(attributes, \"process.runtime.version\")",
+    ]
+  }
+
+  output {
+    metrics = [otelcol.processor.transform.add_resource_attributes_as_metric_attributes.input]
+    logs    = [otelcol.processor.batch.default.input]
+    traces  = [otelcol.processor.batch.default.input]
+  }
+}
+
+otelcol.processor.transform "add_resource_attributes_as_metric_attributes" {
+  error_mode = "ignore"
+
+  metric_statements {
+    context    = "datapoint"
+    statements = [
+      "set(attributes[\"deployment.environment\"], resource.attributes[\"deployment.environment\"])",
+      "set(attributes[\"service.version\"], resource.attributes[\"service.version\"])",
+    ]
+  }
+
+  output {
+    metrics = [otelcol.processor.batch.default.input]
+  }
+}
+
+otelcol.processor.batch "default" {
+  output {
+    metrics = [otelcol.exporter.otlphttp.grafana_cloud.input]
+    logs    = [otelcol.exporter.otlphttp.grafana_cloud.input]
+    traces  = [otelcol.exporter.otlphttp.grafana_cloud.input]
+  }
+}
+
+otelcol.auth.basic "grafana_cloud" {
+  username = sys.env("GRAFANA_CLOUD_INSTANCE_ID")
+  password = sys.env("GRAFANA_CLOUD_API_TOKEN")
+}
+
+// Grafana Cloud's OTLP gateway only speaks OTLP/HTTP, not gRPC — the plain
+// otelcol.exporter.otlp component defaults to gRPC and fails against this
+// endpoint with a "no children to pick from" resolver error.
+otelcol.exporter.otlphttp "grafana_cloud" {
+  client {
+    endpoint = sys.env("GRAFANA_CLOUD_OTLP_ENDPOINT")
+    auth     = otelcol.auth.basic.grafana_cloud.handler
+  }
+}
