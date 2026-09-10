@@ -6,6 +6,8 @@ The arc: get the pre-built app up and prove there's nothing to see. Tear it down
 
 Every terminal command from Step 2 onward runs from **`faro-to-otel-tracing/app/`** — the directory Step 1's `cd` lands you in. It never changes for the rest of this script; each step still says so explicitly below so you can jump in mid-demo without re-deriving it.
 
+A recorded run-through is in [`media/GrafanaTraining_2026-09-10_15-10-18.mp4`](media/GrafanaTraining_2026-09-10_15-10-18.mp4).
+
 ## Setup (before the room fills up)
 
 - Grafana Cloud, logged in, in a browser tab: Frontend Observability app + a Connections → OpenTelemetry (OTLP) page, both open.
